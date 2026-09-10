@@ -14,6 +14,16 @@
   async function loadMfPlugins() {
     try {
       const res = await fetch('/api/v1/jsplugin/musicfree-adapter/plugins', { headers: getHeaders() });
+
+      // 🌟 拦截 MusicFree 适配器插件的 403 报错 (插件未启用)
+      if (res.status === 403) {
+          const json = await res.json().catch(() => ({}));
+          if (json.detail === 'plugin_disabled') {
+              if (window.showPluginDisabledMask) window.showPluginDisabledMask('tab-musicfree');
+              return;
+          }
+      }
+
       if (res.ok) {
         const data = await res.json();
         mfPlugins = Array.isArray(data) ? data : (Array.isArray(data.plugins) ? data.plugins : []);
@@ -450,6 +460,87 @@
       }
   }
 
+  // 🌟 新增：更新指定源 (极简版：一致则忽略，不一致则并存)
+  window.updateMfSource = async function(originalUrl, srcUrl, btnEl) {
+      let targetUrl = '';
+      let isFallbackNeeded = false;
+
+      // 获取当前源的版本号
+      const oldPlugin = mfPlugins.find(p => p.url === originalUrl);
+      const oldVersion = oldPlugin ? (oldPlugin.version || '0.0') : '0.0';
+
+      // 1. 确定更新请求的目标 URL
+      if (originalUrl && originalUrl.startsWith('upload://')) {
+          if (srcUrl && srcUrl.startsWith('http')) targetUrl = srcUrl;
+      } else if (originalUrl && originalUrl.startsWith('http')) {
+          targetUrl = originalUrl;
+          if (srcUrl && srcUrl.startsWith('http') && originalUrl !== srcUrl) isFallbackNeeded = true;
+      } else if (srcUrl && srcUrl.startsWith('http')) {
+          targetUrl = srcUrl;
+      }
+
+      if (!targetUrl) {
+          return alert('⚠️ 缺少有效的网络更新地址，无法更新。');
+      }
+
+      const originalText = btnEl.innerText;
+      btnEl.innerText = '⏳';
+      btnEl.style.pointerEvents = 'none';
+
+      try {
+          // 发起试探性拉取
+          let res = await fetch('/api/v1/jsplugin/musicfree-adapter/plugins', {
+              method: 'POST',
+              headers: getHeaders(),
+              body: JSON.stringify({ url: targetUrl, force: true })
+          });
+          let data = await res.json();
+
+          // 若失败且允许 Fallback，则换 srcUrl 兜底
+          if ((!res.ok || !data.success) && isFallbackNeeded) {
+              targetUrl = srcUrl;
+              res = await fetch('/api/v1/jsplugin/musicfree-adapter/plugins', {
+                  method: 'POST',
+                  headers: getHeaders(),
+                  body: JSON.stringify({ url: targetUrl, force: true })
+              });
+              data = await res.json();
+          }
+
+          if (res.ok && data.success) {
+              const newVersion = data.version || '0.0';
+
+              if (newVersion === oldVersion) {
+                  // 【情况1：版本一致】
+                  // 如果是因为 URL 变化导致后端生成了一条新记录，把这个新冒出来的记录删掉，保留老的
+                  if (targetUrl !== originalUrl) {
+                      try {
+                          await fetch('/api/v1/jsplugin/musicfree-adapter/plugins', {
+                              method: 'DELETE',
+                              headers: getHeaders(),
+                              body: JSON.stringify({ url: targetUrl })
+                          });
+                      } catch (e) {}
+                  }
+                  alert('✅ 已是最新版，无需更新。');
+              } else {
+                  // 【情况2：版本不一致】
+                  // 都保留，不做任何删除动作
+                  alert(`🎉 发现新版本并已添加！\n版本：v${oldVersion} ➔ v${newVersion}`);
+              }
+
+              await loadMfPlugins(); // 刷新列表
+          } else {
+              alert('更新失败: ' + (data.error || '源文件可能已失效'));
+          }
+      } catch (e) {
+          alert('网络异常: ' + e.message);
+      } finally {
+          btnEl.innerText = originalText;
+          btnEl.style.pointerEvents = 'auto';
+      }
+  };
+
   async function importMfSourceFile(file) {
       const btn = document.getElementById('btn-mf-import');
       const originalText = btn.innerText;
@@ -490,6 +581,7 @@
       let html = '';
       mfPlugins.forEach(p => {
           const identifyUrl = p.url || '';
+          const srcUrl = p.srcUrl || ''; // 🌟 提取 srcUrl
 
           html += `
           <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--md-outline-variant);">
@@ -498,8 +590,14 @@
                   <div style="font-size: 11px; color: var(--md-on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${p.srcUrl || p.url || ''}</div>
               </div>
               <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
-                  <input type="checkbox" class="mh-switch-input" ${p.enabled ? 'checked' : ''} onchange="window.toggleMfSource('${identifyUrl}', this.checked, this)">
-                  <button class="mh-source-del-btn" onclick="window.deleteMfSource('${identifyUrl}')">🗑️</button>
+                  <!-- 启用开关 -->
+                  <input type="checkbox" class="mh-switch-input" ${p.enabled ? 'checked' : ''} onchange="window.toggleMfSource('${identifyUrl}', this.checked, this)" title="启用/停用此源">
+                  
+                  <!-- 🌟 传参增加 srcUrl -->
+                  <button class="mh-source-del-btn" style="background: var(--md-primary-container, #d3e3fd) !important; color: var(--md-primary, #0b57d0) !important; border-color: rgba(11, 87, 208, 0.25) !important; margin-left: 0;" onclick="window.updateMfSource('${identifyUrl}', '${srcUrl}', this)" title="检查更新">🔄</button>
+                  
+                  <!-- 删除按钮 -->
+                  <button class="mh-source-del-btn" style="margin-left: 0;" onclick="window.deleteMfSource('${identifyUrl}')" title="删除此源">🗑️</button>
               </div>
           </div>`;
       });

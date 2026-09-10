@@ -476,7 +476,7 @@
           <button class="mh-btn" id="btn-mf-import" style="height: 28px; padding: 0 10px; font-size: 13px;">➕ 上传源</button>
           <button class="mh-btn" id="btn-mf-import-url" style="height: 28px; padding: 0 10px; font-size: 13px;">➕ URL导入</button>
           <button class="mh-btn" id="btn-mf-subscribe" style="height: 28px; padding: 0 10px; font-size: 13px; border-color: #8b5cf6; color: #8b5cf6;">➕ 订阅源</button>
-          <input type="file" id="mf-file-input" accept=".js,.json" style="display: none;">
+          <input type="file" id="mf-file-input" accept=".js, application/javascript, text/javascript" style="display: none;">
         </div>
         <p class="desc" style="margin-bottom: 12px;">管理并更新您的 MusicFree 兼容插件源。</p>
         <div id="mf-sources-list" style="border: 1px solid var(--md-outline-variant, #ccc); border-radius: 8px; background: var(--md-surface-1);">
@@ -496,7 +496,7 @@
           <div style="margin-top: 6px; font-size: 13px; color: var(--md-on-surface-variant); font-weight: 500;">
             智能音箱的语音口令扩展
           </div>
-          <p class="desc" style="margin-top: 4px; font-size: 12px; opacity: 0.7;">SongLoft MIoT Helper v0.7.1</p>
+          <p class="desc" style="margin-top: 4px; font-size: 12px; opacity: 0.7;">SongLoft MIoT Helper v0.7.2</p>
         </div>
 
         <div class="mh-divider"></div>
@@ -653,7 +653,7 @@
           <span>⚙️ LXMusic 源脚本管理</span>
           <button class="mh-btn" id="btn-lx-import" style="height: 28px; padding: 0 10px; font-size: 13px;">➕ 上传.js源脚本</button>
           <button class="mh-btn" id="btn-lx-import-url" style="height: 28px; padding: 0 10px; font-size: 13px;">➕ 从URL导入源</button>
-          <input type="file" id="lx-file-input" accept=".js" style="display: none;">
+          <input type="file" id="lx-file-input" accept=".js, application/javascript, text/javascript" style="display: none;">
         </div>
         <p class="desc" style="margin-bottom: 12px;">导入 LXMusic 兼容的源脚本以解锁全网搜索功能。</p>
         <div id="lx-sources-list" style="border: 1px solid var(--md-outline-variant, #ccc); border-radius: 8px; background: var(--md-surface-1);">
@@ -1405,6 +1405,7 @@
     if (tabId === 'tab-debug') pluginName = '智能音箱';
     else if (tabId === 'tab-lxmusic') pluginName = '洛雪音源';
     else if (tabId === 'tab-webdav') pluginName = 'WebDAV';
+    else if (tabId === 'tab-musicfree') pluginName = 'MF';
 
     const mask = document.createElement('div');
     mask.className = 'plugin-disabled-mask';
