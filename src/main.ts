@@ -25,6 +25,8 @@ let cachedGlobalSettings: any = {
     targetPlaylist: 'iWebPlayer推送',
     hitSound: 'SongLoft_for_u.a2ac34c5.mp3',
     summaryTTS: 'on',
+    failedSound: 'on',   // 🌟 失败提示音开关 ('on' | 'off')
+    emptyCmdTTS: 'on',   // 🌟 空指令语音提示开关 ('on' | 'off')
     shuffleWords: [...DEF_SHUFFLE],
     limitPrefixes: [...DEF_PREFIX],
     limitSuffixes: [...DEF_SUFFIX],
@@ -167,6 +169,11 @@ async function stopMiotPlayer(accountId: string, deviceId: string) {
 
 // ⚠️ 播放失败提示音 (SongLoft_failed.3a76aaad.mp3) 并挂载 5 秒自动关停
 async function playFailedSound(accountId: string, deviceId: string) {
+    // 🔇 开关关闭时静默处理（不动定时器，避免打断正在播放的提示音收尾）
+    if (cachedGlobalSettings.failedSound === 'off') {
+        pushDebugLog(`🔇 失败提示音已关闭，本次静默处理`);
+        return;
+    }
     cancelAllTimers(accountId, deviceId);
     const failedSoundFile = 'SongLoft_failed.3a76aaad.mp3';
     pushDebugLog(`⚠️ 触发失败提示音: ${failedSoundFile}`);
@@ -415,6 +422,23 @@ function stripEdges(s: string) {
     return s;
 }
 
+// 🌟 判断某条口令是否允许「无后续关键词」直接执行
+//   - 配置了固定关键词：关键词由配置提供，用户无需再补充
+//   - 专家模式·纯指令调用(action)：只发一次请求，本就不需要关键词
+//   - 专家模式·URL/请求体均不含 {keyword} 占位符：关键词不参与请求
+function isKeywordOptional(route: any): boolean {
+    if (!route) return false;
+    if (route.fixedKeyword) return true;
+    if (route.engine === 'expert') {
+        const c = route.expertCfg || {};
+        if (c.responseType === 'action') return true;
+        const tpl = String(c.urlTemplate || '');
+        const body = String(c.postBody || '');
+        if (!tpl.includes('{keyword}') && !body.includes('{keyword}')) return true;
+    }
+    return false;
+}
+
 // 解析整句：意图命中 + 提取平台 + 提取动态乱序 + 提取动态截断 + 去废话
 function parseVoiceCommand(query: string) {
     const trimmed = (query || '').trim();
@@ -509,6 +533,7 @@ function parseVoiceCommand(query: string) {
         platform: ep.platform, keyword: kw, matchedWord,
         limit,
         shuffleFlag: finalShuffle, // 🌟 传出最终运算后的乱序标记
+        keywordOptional: isKeywordOptional(best), // 🌟 该口令是否允许无后续关键词直接执行
         expertCfg: best.expertCfg
     };
 }
@@ -1153,10 +1178,16 @@ async function connectWebSocket() {
                         const parsed = parseVoiceCommand(trimmedText);
 
                         if (parsed) {
-                            if (parsed.keyword) {
-                                // 正常流程：有关键词，继续搜歌
+                            // 🌟 允许执行的两种情形：
+                            //   一、有关键词（常规搜歌）
+                            //   二、该口令本身不需要关键词（固定关键词 / 专家模式纯指令调用）
+                            if (parsed.keyword || parsed.keywordOptional) {
                                 const platDesc = parsed.platform ? ` 平台词: [${PLAT_MAP[parsed.platform] || parsed.platform}]` : '';
-                                pushDebugLog(`🎯 命中口令词: [${parsed.matchedWord}], 完整指令: "${trimmedText}"${platDesc}`);
+                                if (parsed.keyword) {
+                                    pushDebugLog(`🎯 命中口令词: [${parsed.matchedWord}], 完整指令: "${trimmedText}"${platDesc}`);
+                                } else {
+                                    pushDebugLog(`🎯 命中口令词: [${parsed.matchedWord}]，该指令无需后续关键词，直接执行${platDesc}`);
+                                }
                                 playHitSound(msg.data.account_id, msg.data.device_id);
 
                                 // 传入解析好的参数
@@ -1171,6 +1202,12 @@ async function connectWebSocket() {
                                 // 🌟 新增：空指令拦截流程 (只听到口令，没有后续内容)
                                 pushDebugLog(`⚠️ 拦截到空指令：只听到口令[${parsed.matchedWord}]，无后续关键词。`);
                                 pushDebugLog('========================================');
+
+                                // 🔇 独立开关关闭时，只记日志不出声
+                                if (cachedGlobalSettings.emptyCmdTTS === 'off') {
+                                    pushDebugLog(`🔇 空指令语音提示已关闭，本次静默处理`);
+                                    return;
+                                }
 
                                 // 启动一个异步闭包发送 TTS 语音，不阻塞 WebSocket 主线程
                                 (async () => {

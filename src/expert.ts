@@ -107,6 +107,16 @@ export async function searchExpertSongs(
         const method = (cfg.method || 'GET').toUpperCase();
         const responseType = cfg.responseType || 'auto';
 
+        const kTrim = (keyword || '').trim();
+        if (kTrim) {
+            logFn(`🔑 [专家模式] 注入语音关键词: "${kTrim}"`);
+        } else if (cfg.urlTemplate.includes('{keyword}') || String(cfg.postBody || '').includes('{keyword}')) {
+            // 配置里写了占位符，但本次没听到关键词 —— 明确提示，避免误以为配置失效
+            logFn(`⚠️ [专家模式] 配置含 {keyword} 占位符，但本次未听到关键词，将以空值发起请求`);
+        } else {
+            logFn(`ℹ️ [专家模式] 本次指令无需关键词 (配置未使用 {keyword} 占位符)，直接执行`);
+        }
+
         logFn(`🧩 [专家模式] 触发自定义 URL (${method}): ${requestUrl}`);
 
         const headers: Record<string, string> = { 'X-Fetch-Timeout-Ms': '8000' };

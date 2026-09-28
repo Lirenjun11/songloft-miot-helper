@@ -316,6 +316,22 @@
           </div>
           <div style="font-size: 11px; color: var(--md-on-surface-variant); margin-top: 6px;">搜索成功后，在播放前用小爱语音一次性总结并播报搜索成果。</div>
         </div>
+
+        <div class="mh-field" style="margin-bottom: 0; margin-top: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <label style="font-weight: bold; color: var(--md-on-surface); margin-bottom: 0;">搜索失败提示音</label>
+            <input type="checkbox" id="global-failed-sound" class="mh-switch-input" checked title="启用/停用失败提示音">
+          </div>
+          <div style="font-size: 11px; color: var(--md-on-surface-variant); margin-top: 6px;">未搜到歌曲、推送失败等异常情况下播放的提示音。</div>
+        </div>
+
+        <div class="mh-field" style="margin-bottom: 0; margin-top: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <label style="font-weight: bold; color: var(--md-on-surface); margin-bottom: 0;">空指令语音提示</label>
+            <input type="checkbox" id="global-emptycmd-tts" class="mh-switch-input" checked title="启用/停用空指令语音提示">
+          </div>
+          <div style="font-size: 11px; color: var(--md-on-surface-variant); margin-top: 6px;">只听到口令、没听到后续关键词时，用小爱语音提醒重试。</div>
+        </div>
       </div>
 
       <div class="card" style="margin-top: 12px;">
@@ -528,7 +544,7 @@
                 <option value="auto" selected>自动探测 (推荐)</option>
                 <option value="json">JSON 歌曲列表</option>
                 <option value="audio">单个直链音频</option>
-                <option value="action">纯指令调用 (物联网/Webhook，不播放)</option>
+                <option value="action">纯指令调用 (物联网/Webhook，不播放，无需关键词)</option>
               </select>
             </div>
 
@@ -539,6 +555,7 @@
 
             <div id="ex-action-fields" style="display: none; border-top: 1px dashed var(--md-outline-variant); padding-top: 12px; margin-top: 4px;">
               <div style="font-size: 12px; color: var(--md-on-surface-variant); margin-bottom: 10px;">🔌 纯指令调用：仅向 URL 发起一次请求（用于开关设备、触发 Webhook 等），不会播放任何音乐。</div>
+              <div style="font-size: 12px; color: var(--md-on-surface-variant); margin-bottom: 10px;">💡 此类条目<b>无需后续关键词</b>：喊完口令（如「打开灯」）即触发。若 URL 中不含 <code>{keyword}</code> 占位符，关键词同样可省略。</div>
               <div class="mh-field">
                 <label>调用成功后的语音回话 (可选，留空则静默)</label>
                 <input type="text" id="modal-ex-cmd-actionreply" class="mh-input" placeholder="例如：已为你打开客厅的灯">
@@ -1118,6 +1135,10 @@
 
     const summaryTTS = document.getElementById('global-summary-tts')?.checked ? 'on' : 'off';
 
+    // 🌟 提示音开关：元素缺失时按「默认开启」兜底
+    const failedSound = document.getElementById('global-failed-sound')?.checked === false ? 'off' : 'on';
+    const emptyCmdTTS = document.getElementById('global-emptycmd-tts')?.checked === false ? 'off' : 'on';
+
     const enableShuffle = document.getElementById('nlp-enable-shuffle')?.checked !== false;
     const enableLimit = document.getElementById('nlp-enable-limit')?.checked !== false;
 
@@ -1125,6 +1146,8 @@
         targetPlaylist,
         hitSound,
         summaryTTS,
+        failedSound,
+        emptyCmdTTS,
         shuffleWords: nlpShuffleWords,
         limitPrefixes: nlpLimitPrefixes,
         limitSuffixes: nlpLimitSuffixes,
@@ -1199,6 +1222,11 @@
               needSave = true;
           }
 
+          // 🔇 6. 新增：提示音开关兜底 (默认保持现有提示音行为)
+          if (parsed.summaryTTS === undefined) { parsed.summaryTTS = 'on'; needSave = true; }
+          if (parsed.failedSound === undefined) { parsed.failedSound = 'on'; needSave = true; }
+          if (parsed.emptyCmdTTS === undefined) { parsed.emptyCmdTTS = 'on'; needSave = true; }
+
           // 如果发现有任何缺失（首次安装），则把完整版对象重新存入数据库
           if (needSave) {
               parsed.targetPlaylist = parsed.targetPlaylist || 'iWebPlayer推送';
@@ -1240,6 +1268,10 @@
     document.getElementById('global-hit-sound')?.addEventListener('change', saveGlobalSettings);
     document.getElementById('global-default-limit')?.addEventListener('change', saveGlobalSettings);
     document.getElementById('global-summary-tts')?.addEventListener('change', saveGlobalSettings);
+
+    // 🔇 提示音开关 -> 变更即保存
+    document.getElementById('global-failed-sound')?.addEventListener('change', saveGlobalSettings);
+    document.getElementById('global-emptycmd-tts')?.addEventListener('change', saveGlobalSettings);
 
     // 绑定 UI 开关点击事件，触发透明度更新和数据保存
     document.getElementById('nlp-enable-shuffle')?.addEventListener('change', () => { updateNlpUiState(); saveGlobalSettings(); });
@@ -1477,6 +1509,13 @@
       if (summaryTtsToggle && savedSettings.summaryTTS !== undefined) {
           summaryTtsToggle.checked = savedSettings.summaryTTS !== 'off';
       }
+
+      // 🔇 恢复提示音开关的勾选状态
+      const failedSoundToggle = document.getElementById('global-failed-sound');
+      if (failedSoundToggle) failedSoundToggle.checked = savedSettings.failedSound !== 'off';
+
+      const emptyCmdToggle = document.getElementById('global-emptycmd-tts');
+      if (emptyCmdToggle) emptyCmdToggle.checked = savedSettings.emptyCmdTTS !== 'off';
 
       // 🌟 恢复 NLP 胶囊的数组，如果没配过就用我们在顶部声明的默认数组
       if (Array.isArray(savedSettings.shuffleWords)) nlpShuffleWords = savedSettings.shuffleWords;
