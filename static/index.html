@@ -316,6 +316,22 @@
           </div>
           <div style="font-size: 11px; color: var(--md-on-surface-variant); margin-top: 6px;">搜索成功后，在播放前用小爱语音一次性总结并播报搜索成果。</div>
         </div>
+
+        <div class="mh-field" style="margin-bottom: 0; margin-top: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <label style="font-weight: bold; color: var(--md-on-surface); margin-bottom: 0;">搜索失败提示音</label>
+            <input type="checkbox" id="global-failed-sound" class="mh-switch-input" checked title="启用/停用失败提示音">
+          </div>
+          <div style="font-size: 11px; color: var(--md-on-surface-variant); margin-top: 6px;">未搜到歌曲、推送失败等异常情况下播放的提示音。</div>
+        </div>
+
+        <div class="mh-field" style="margin-bottom: 0; margin-top: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <label style="font-weight: bold; color: var(--md-on-surface); margin-bottom: 0;">空指令语音提示</label>
+            <input type="checkbox" id="global-emptycmd-tts" class="mh-switch-input" checked title="启用/停用空指令语音提示">
+          </div>
+          <div style="font-size: 11px; color: var(--md-on-surface-variant); margin-top: 6px;">只听到口令、没听到后续关键词时，用小爱语音提醒重试。</div>
+        </div>
       </div>
 
       <div class="card" style="margin-top: 12px;">
@@ -487,7 +503,147 @@
 
 
     <div id="tab-resume" class="mh-pane"><div class="card">续播功能建设中，打算支持iWebPlayer和有声书的续播...</div></div>
-    <div id="tab-expert" class="mh-pane"><div class="card">语音触发指定URL功能，待开发...</div></div>
+    <div id="tab-expert" class="mh-pane">
+      <div class="card">
+        <div style="display: flex; justify-content: flex-start; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;">
+          <div class="card-title" style="margin: 0;">🧩 专家模式 (自定义 URL 音源)</div>
+          <button class="mh-btn" id="btn-show-add-ex-cmd" style="height: 28px; padding: 0 10px; font-size: 13px;">➕ 新增控制条目</button>
+        </div>
+        <p class="desc" style="margin-bottom: 16px; line-height: 1.6;">通过语音口令触发你自定义的 HTTP 接口/直链音频，插件会自动解析返回结果并推送播放。URL 中可用 <code>{keyword}</code> 占位符注入语音里的关键词。</p>
+
+        <div id="ex-cmd-modal-mask" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.4); z-index: 9999; justify-content: center; align-items: center; backdrop-filter: blur(2px);">
+          <div class="modal-box" style="max-height: 88vh; overflow-y: auto;">
+            <div class="card-title" id="ex-cmd-modal-title" style="margin-bottom: 16px;">➕ 新增控制条目</div>
+
+            <div class="mh-field">
+              <label>条目名称 (仅用于区分展示)</label>
+              <input type="text" id="modal-ex-cmd-name" class="mh-input" placeholder="例如：我的电台、热歌榜API">
+            </div>
+
+            <div class="mh-field">
+              <label>请求方式</label>
+              <select id="modal-ex-cmd-method" class="mh-select">
+                <option value="GET" selected>GET</option>
+                <option value="POST">POST</option>
+              </select>
+            </div>
+
+            <div class="mh-field">
+              <label>目标 URL (可含 {keyword} 占位符)</label>
+              <input type="text" id="modal-ex-cmd-url" class="mh-input" placeholder="https://api.example.com/search?q={keyword}">
+            </div>
+
+            <div class="mh-field" id="ex-postbody-field" style="display: none;">
+              <label>POST 请求体 (JSON，可含 {keyword})</label>
+              <input type="text" id="modal-ex-cmd-postbody" class="mh-input" placeholder='{"keyword":"{keyword}","page":1}'>
+            </div>
+
+            <div class="mh-field">
+              <label>返回类型</label>
+              <select id="modal-ex-cmd-restype" class="mh-select">
+                <option value="auto" selected>自动探测 (推荐)</option>
+                <option value="json">JSON 歌曲列表</option>
+                <option value="audio">单个直链音频</option>
+                <option value="action">纯指令调用 (物联网/Webhook，不播放，无需关键词)</option>
+              </select>
+            </div>
+
+            <div class="mh-field" id="ex-headers-field">
+              <label>自定义请求头 (可选，JSON 对象)</label>
+              <input type="text" id="modal-ex-cmd-headers" class="mh-input" placeholder='{"Authorization":"Bearer xxx"}'>
+            </div>
+
+            <div id="ex-action-fields" style="display: none; border-top: 1px dashed var(--md-outline-variant); padding-top: 12px; margin-top: 4px;">
+              <div style="font-size: 12px; color: var(--md-on-surface-variant); margin-bottom: 10px;">🔌 纯指令调用：仅向 URL 发起一次请求（用于开关设备、触发 Webhook 等），不会播放任何音乐。</div>
+              <div style="font-size: 12px; color: var(--md-on-surface-variant); margin-bottom: 10px;">💡 此类条目<b>无需后续关键词</b>：喊完口令（如「打开灯」）即触发。若 URL 中不含 <code>{keyword}</code> 占位符，关键词同样可省略。</div>
+              <div class="mh-field">
+                <label>调用成功后的语音回话 (可选，留空则静默)</label>
+                <input type="text" id="modal-ex-cmd-actionreply" class="mh-input" placeholder="例如：已为你打开客厅的灯">
+              </div>
+            </div>
+
+            <div id="ex-json-fields" style="border-top: 1px dashed var(--md-outline-variant); padding-top: 12px; margin-top: 4px;">
+              <div style="font-size: 12px; color: var(--md-on-surface-variant); margin-bottom: 10px;">📋 JSON 字段映射 (仅 JSON 列表时生效，留空则自动猜测常见字段)</div>
+
+              <div class="mh-field">
+                <label>歌曲列表路径 (listPath)</label>
+                <input type="text" id="modal-ex-cmd-listpath" class="mh-input" placeholder="例如：data.list 或 result.songs">
+              </div>
+
+              <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                <div class="mh-field" style="flex: 1; min-width: 130px;">
+                  <label>标题字段</label>
+                  <input type="text" id="modal-ex-cmd-f-title" class="mh-input" placeholder="title,name">
+                </div>
+                <div class="mh-field" style="flex: 1; min-width: 130px;">
+                  <label>播放地址字段</label>
+                  <input type="text" id="modal-ex-cmd-f-url" class="mh-input" placeholder="url,src">
+                </div>
+              </div>
+
+              <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                <div class="mh-field" style="flex: 1; min-width: 130px;">
+                  <label>歌手字段</label>
+                  <input type="text" id="modal-ex-cmd-f-artist" class="mh-input" placeholder="artist,singer">
+                </div>
+                <div class="mh-field" style="flex: 1; min-width: 130px;">
+                  <label>封面字段</label>
+                  <input type="text" id="modal-ex-cmd-f-cover" class="mh-input" placeholder="cover,pic">
+                </div>
+              </div>
+
+              <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                <div class="mh-field" style="flex: 1; min-width: 130px;">
+                  <label>专辑字段</label>
+                  <input type="text" id="modal-ex-cmd-f-album" class="mh-input" placeholder="album">
+                </div>
+                <div class="mh-field" style="flex: 1; min-width: 130px;">
+                  <label>时长字段</label>
+                  <input type="text" id="modal-ex-cmd-f-duration" class="mh-input" placeholder="duration">
+                </div>
+              </div>
+            </div>
+
+            <div id="ex-playback-fields">
+              <div class="mh-field" style="margin-top: 8px;">
+                <label>截取多少首 (留空则使用全局默认)</label>
+                <input type="number" id="modal-ex-cmd-limit" class="mh-input" placeholder="例如：20">
+              </div>
+
+              <div class="mh-field" style="display: flex; justify-content: space-between; align-items: center;">
+                <label style="margin-bottom: 0;">获取歌曲后乱序</label>
+                <input type="checkbox" id="modal-ex-cmd-shuffle" class="mh-switch-input">
+              </div>
+            </div>
+
+            <div style="border-top: 1px dashed var(--md-outline-variant); padding-top: 12px; margin-top: 8px;">
+              <div style="font-size: 12px; color: var(--md-on-surface-variant); margin-bottom: 10px;">🧪 测试调用 (仅解析预览，不会推送到音箱)</div>
+              <div class="mh-field">
+                <label>测试关键词 (替换 URL 中的 {keyword})</label>
+                <div style="display: flex; gap: 12px; align-items: center;">
+                  <input type="text" id="modal-ex-cmd-testkw" class="mh-input" placeholder="例如：周杰伦">
+                  <button class="mh-btn" id="btn-ex-cmd-test" style="white-space: nowrap;">▶️ 测试</button>
+                </div>
+              </div>
+              <div id="ex-test-result" style="display: none; margin-top: 4px;"></div>
+            </div>
+
+            <div style="display: flex; align-items: center; margin-top: 20px; width: 100%;">
+              <div style="flex: 1; display: flex; justify-content: flex-start;">
+                <button class="mh-btn mh-btn-danger" id="btn-ex-cmd-delete" style="display: none;">🗑️ 删除</button>
+              </div>
+              <div style="flex: 1; display: flex; justify-content: center;">
+                <button class="mh-btn" id="btn-ex-cmd-cancel">❌ 取消</button>
+              </div>
+              <div style="flex: 1; display: flex; justify-content: flex-end;">
+                <button class="mh-btn" id="btn-ex-cmd-confirm">✅ 创建</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="ex-cmd-containers"></div>
+      </div>
+    </div>
     <div id="tab-about" class="mh-pane">
       <div class="card">
         <div style="text-align: center; padding: 12px 0 0;">
@@ -808,6 +964,7 @@
   <script src="static/webdav.js"></script>
   <script src="static/lxmusic.js"></script>
   <script src="static/musicfree.js"></script>
+  <script src="static/expert.js"></script>
 
   <script>
   /* ==========================================
@@ -978,6 +1135,10 @@
 
     const summaryTTS = document.getElementById('global-summary-tts')?.checked ? 'on' : 'off';
 
+    // 🌟 提示音开关：元素缺失时按「默认开启」兜底
+    const failedSound = document.getElementById('global-failed-sound')?.checked === false ? 'off' : 'on';
+    const emptyCmdTTS = document.getElementById('global-emptycmd-tts')?.checked === false ? 'off' : 'on';
+
     const enableShuffle = document.getElementById('nlp-enable-shuffle')?.checked !== false;
     const enableLimit = document.getElementById('nlp-enable-limit')?.checked !== false;
 
@@ -985,6 +1146,8 @@
         targetPlaylist,
         hitSound,
         summaryTTS,
+        failedSound,
+        emptyCmdTTS,
         shuffleWords: nlpShuffleWords,
         limitPrefixes: nlpLimitPrefixes,
         limitSuffixes: nlpLimitSuffixes,
@@ -1059,6 +1222,11 @@
               needSave = true;
           }
 
+          // 🔇 6. 新增：提示音开关兜底 (默认保持现有提示音行为)
+          if (parsed.summaryTTS === undefined) { parsed.summaryTTS = 'on'; needSave = true; }
+          if (parsed.failedSound === undefined) { parsed.failedSound = 'on'; needSave = true; }
+          if (parsed.emptyCmdTTS === undefined) { parsed.emptyCmdTTS = 'on'; needSave = true; }
+
           // 如果发现有任何缺失（首次安装），则把完整版对象重新存入数据库
           if (needSave) {
               parsed.targetPlaylist = parsed.targetPlaylist || 'iWebPlayer推送';
@@ -1100,6 +1268,10 @@
     document.getElementById('global-hit-sound')?.addEventListener('change', saveGlobalSettings);
     document.getElementById('global-default-limit')?.addEventListener('change', saveGlobalSettings);
     document.getElementById('global-summary-tts')?.addEventListener('change', saveGlobalSettings);
+
+    // 🔇 提示音开关 -> 变更即保存
+    document.getElementById('global-failed-sound')?.addEventListener('change', saveGlobalSettings);
+    document.getElementById('global-emptycmd-tts')?.addEventListener('change', saveGlobalSettings);
 
     // 绑定 UI 开关点击事件，触发透明度更新和数据保存
     document.getElementById('nlp-enable-shuffle')?.addEventListener('change', () => { updateNlpUiState(); saveGlobalSettings(); });
@@ -1337,6 +1509,13 @@
       if (summaryTtsToggle && savedSettings.summaryTTS !== undefined) {
           summaryTtsToggle.checked = savedSettings.summaryTTS !== 'off';
       }
+
+      // 🔇 恢复提示音开关的勾选状态
+      const failedSoundToggle = document.getElementById('global-failed-sound');
+      if (failedSoundToggle) failedSoundToggle.checked = savedSettings.failedSound !== 'off';
+
+      const emptyCmdToggle = document.getElementById('global-emptycmd-tts');
+      if (emptyCmdToggle) emptyCmdToggle.checked = savedSettings.emptyCmdTTS !== 'off';
 
       // 🌟 恢复 NLP 胶囊的数组，如果没配过就用我们在顶部声明的默认数组
       if (Array.isArray(savedSettings.shuffleWords)) nlpShuffleWords = savedSettings.shuffleWords;

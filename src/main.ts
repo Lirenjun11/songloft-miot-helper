@@ -4,6 +4,7 @@ import type { HTTPRequest, HTTPResponse } from '@songloft/plugin-sdk';
 import { setupWebDAVRoutes, searchWebDavSongs } from './webdav';
 import { searchLxMusicSongs } from './lxmusic';
 import { searchMusicFreeSongs, searchMusicFreePlaylists } from './musicfree';
+import { searchExpertSongs } from './expert';
 
 const router = createRouter();
 let wsClient: any = null;
@@ -24,6 +25,8 @@ let cachedGlobalSettings: any = {
     targetPlaylist: 'iWebPlayer推送',
     hitSound: 'SongLoft_for_u.a2ac34c5.mp3',
     summaryTTS: 'on',
+    failedSound: 'on',   // 🌟 失败提示音开关 ('on' | 'off')
+    emptyCmdTTS: 'on',   // 🌟 空指令语音提示开关 ('on' | 'off')
     shuffleWords: [...DEF_SHUFFLE],
     limitPrefixes: [...DEF_PREFIX],
     limitSuffixes: [...DEF_SUFFIX],
@@ -166,6 +169,11 @@ async function stopMiotPlayer(accountId: string, deviceId: string) {
 
 // ⚠️ 播放失败提示音 (SongLoft_failed.3a76aaad.mp3) 并挂载 5 秒自动关停
 async function playFailedSound(accountId: string, deviceId: string) {
+    // 🔇 开关关闭时静默处理（不动定时器，避免打断正在播放的提示音收尾）
+    if (cachedGlobalSettings.failedSound === 'off') {
+        pushDebugLog(`🔇 失败提示音已关闭，本次静默处理`);
+        return;
+    }
     cancelAllTimers(accountId, deviceId);
     const failedSoundFile = 'SongLoft_failed.3a76aaad.mp3';
     pushDebugLog(`⚠️ 触发失败提示音: ${failedSoundFile}`);
@@ -193,9 +201,25 @@ async function playFailedSound(accountId: string, deviceId: string) {
     }
 }
 
-// ⚙️ 预热全局设置缓存
-async function updateGlobalSettingsCache() {
+// 🗣️ 专家模式指令回话 (调用成功后的自定义 TTS 播报)
+async function speakExpertReply(text: string, accountId: string, deviceId: string) {
     try {
+        const hostUrl = await songloft.plugin.getHostUrl();
+        const token = await songloft.plugin.getToken();
+        pushDebugLog(`📣 [专家模式] 指令回话 TTS: ${text}`);
+        const res = await fetch(`${hostUrl}/api/v1/jsplugin/miot/mina/tts`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Fetch-Timeout-Ms': '3000' },
+            body: JSON.stringify({ account_id: accountId, device_id: deviceId, text })
+        });
+        if (!res.ok) pushDebugLog(`⚠️ [专家模式] 指令回话 TTS 下发失败 (HTTP ${res.status})`);
+    } catch (e) {
+        pushDebugLog(`⚠️ [专家模式] 指令回话 TTS 异常: ${e}`);
+    }
+}
+
+// ⚙️ 预热全局设置缓存
+async function updateGlobalSettingsCache() {    try {
         const raw = await songloft.storage.get('xiaoai_global_settings');
         if (raw) {
             const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
@@ -227,6 +251,50 @@ function pushDebugLog(msg: string) {
 
 router.get('/logs', async (req) => { return jsonResponse({ logs: debugLogs }); });
 router.delete('/logs', async (req) => { debugLogs.length = 0; return jsonResponse({ ret: "OK" }); });
+
+// 🧪 专家模式测试调用接口：仅解析并返回结果，不推送到音箱
+router.post('/expert/test', async (req) => {
+    try {
+        const body = req.body ? JSON.parse(typeof req.body === 'string' ? req.body : String.fromCharCode.apply(null, Array.from(req.body as Uint8Array))) : {};
+        const cfg = body.config;
+        const keyword = typeof body.keyword === 'string' ? body.keyword : '';
+        if (!cfg || !cfg.urlTemplate) return jsonResponse({ error: "缺少有效的配置或 URL" }, 400);
+
+        const testLogs: string[] = [];
+        const collect = (m: string) => { testLogs.push(m); };
+
+        const started = Date.now();
+        const searchRes = await searchExpertSongs(cfg, keyword, cfg.limit || 0, collect);
+        const cost = Date.now() - started;
+
+        // 纯指令调用模式：返回调用结果而非歌曲
+        if (searchRes && searchRes.isAction) {
+            return jsonResponse({
+                ok: !!searchRes.actionOk, cost, logs: testLogs,
+                isAction: true,
+                actionStatus: searchRes.actionStatus,
+                actionSnippet: searchRes.actionSnippet || '',
+                actionReply: searchRes.actionReply || ''
+            });
+        }
+
+        if (!searchRes || searchRes.songs.length === 0) {
+            return jsonResponse({ ok: false, cost, logs: testLogs, songs: [], collectionName: '' });
+        }
+
+        const previewSongs = searchRes.songs.slice(0, 30).map(s => ({
+            title: s.title, artist: s.artist, album: s.album,
+            duration: s.duration, cover_url: s.cover_url, url: s.url
+        }));
+
+        return jsonResponse({
+            ok: true, cost, logs: testLogs,
+            total: searchRes.songs.length,
+            collectionName: searchRes.collectionName,
+            songs: previewSongs
+        });
+    } catch (e) { return jsonResponse({ ok: false, error: String(e) }, 500); }
+});
 
 // 安全写库助手
 async function safeStorageSet(key: string, val: string) {
@@ -354,6 +422,23 @@ function stripEdges(s: string) {
     return s;
 }
 
+// 🌟 判断某条口令是否允许「无后续关键词」直接执行
+//   - 配置了固定关键词：关键词由配置提供，用户无需再补充
+//   - 专家模式·纯指令调用(action)：只发一次请求，本就不需要关键词
+//   - 专家模式·URL/请求体均不含 {keyword} 占位符：关键词不参与请求
+function isKeywordOptional(route: any): boolean {
+    if (!route) return false;
+    if (route.fixedKeyword) return true;
+    if (route.engine === 'expert') {
+        const c = route.expertCfg || {};
+        if (c.responseType === 'action') return true;
+        const tpl = String(c.urlTemplate || '');
+        const body = String(c.postBody || '');
+        if (!tpl.includes('{keyword}') && !body.includes('{keyword}')) return true;
+    }
+    return false;
+}
+
 // 解析整句：意图命中 + 提取平台 + 提取动态乱序 + 提取动态截断 + 去废话
 function parseVoiceCommand(query: string) {
     const trimmed = (query || '').trim();
@@ -447,7 +532,9 @@ function parseVoiceCommand(query: string) {
         quality: best.quality, strategy: best.strategy,
         platform: ep.platform, keyword: kw, matchedWord,
         limit,
-        shuffleFlag: finalShuffle // 🌟 传出最终运算后的乱序标记
+        shuffleFlag: finalShuffle, // 🌟 传出最终运算后的乱序标记
+        keywordOptional: isKeywordOptional(best), // 🌟 该口令是否允许无后续关键词直接执行
+        expertCfg: best.expertCfg
     };
 }
 
@@ -455,7 +542,7 @@ function parseVoiceCommand(query: string) {
 // ==========================================
 // 🚀 核心：全局意图路由表
 // ==========================================
-let voiceRoutes: Record<string, { type: string, engine: string, node: string, quality?: string, strategy?: string, limit?: number, shuffle?: boolean, fixedKeyword?: string }> = {};
+let voiceRoutes: Record<string, { type: string, engine: string, node: string, quality?: string, strategy?: string, limit?: number, shuffle?: boolean, fixedKeyword?: string, expertCfg?: any }> = {};
 
 async function rebuildVoiceRoutes() {
     try {
@@ -463,6 +550,7 @@ async function rebuildVoiceRoutes() {
         const wdRaw = await songloft.storage.get('xiaoai_dav_configs');
         const lxRaw = await songloft.storage.get('xiaoai_lx_configs');
         const mfRaw = await songloft.storage.get('xiaoai_mf_configs');
+        const exRaw = await songloft.storage.get('xiaoai_expert_configs');
 
         let wdConfigs = [];
         let lxConfigs = [];
@@ -520,6 +608,13 @@ async function rebuildVoiceRoutes() {
 
         const allConfigs = [...wdConfigs, ...lxConfigs, ...mfConfigs];
 
+        // 🌟 专家模式配置 (纯自定义，不注入任何默认口令)
+        let exConfigs: any[] = [];
+        if (exRaw && exRaw !== 'null' && exRaw !== '[]') {
+            try { exConfigs = typeof exRaw === 'string' ? JSON.parse(exRaw) : exRaw; } catch (e) {}
+            if (!Array.isArray(exConfigs)) exConfigs = [];
+        }
+
         for (const cfg of allConfigs) {
             // 🌟 拦截被禁用的口令组，如果设为 false 则直接跳过，不挂载到路由表
             if (cfg.enabled === false) continue;
@@ -531,6 +626,25 @@ async function rebuildVoiceRoutes() {
                         // 👇 如果启用了，就把关键字拿出来；否则置空
                         const fixedKeyword = cfg.enableFixedKeyword && cfg.fixedKeyword ? cfg.fixedKeyword : undefined;
                         voiceRoutes[cmd] = { type: cfg.type, engine, node: cfg.node, quality: cfg.quality, strategy: cfg.strategy, limit: cfg.limit, shuffle: cfg.shuffle, fixedKeyword };
+                    }
+                }
+            }
+        }
+
+        // 🌟 挂载专家模式自定义口令
+        for (const cfg of exConfigs) {
+            if (cfg.enabled === false) continue;
+            if (Array.isArray(cfg.cmds)) {
+                for (const cmd of cfg.cmds) {
+                    if (cmd) {
+                        voiceRoutes[cmd] = {
+                            type: 'expert',
+                            engine: 'expert',
+                            node: 'default',
+                            limit: cfg.limit,
+                            shuffle: cfg.shuffle,
+                            expertCfg: cfg
+                        };
                     }
                 }
             }
@@ -653,9 +767,9 @@ async function createPushPlaylistAndPlay(songs: any[], accountId: string, device
                 throw new Error(`LXMusic 歌曲导入失败 (HTTP ${importRes.status})`);
             }
 
-        } else if (engine === 'webdav' || engine === 'musicfree') {
-            const isMf = engine === 'musicfree';
-            pushDebugLog(`🔗 [${isMf ? 'MusicFree' : 'WebDAV'}通道] 正在向系统注册 ${songs.length} 首远程歌曲 (${songNames})...`);
+        } else if (engine === 'webdav' || engine === 'musicfree' || engine === 'expert') {
+            const channelName = engine === 'musicfree' ? 'MusicFree' : (engine === 'expert' ? '专家模式' : 'WebDAV');
+            pushDebugLog(`🔗 [${channelName}通道] 正在向系统注册 ${songs.length} 首远程歌曲 (${songNames})...`);
 
             const regRes = await fetch(`${hostUrl}/api/v1/songs/remote`, { method: 'POST', headers, body: JSON.stringify(songs) });
             const songIds = ((await regRes.json()).songs || []).map((s: any) => s.id);
@@ -704,8 +818,50 @@ async function createPushPlaylistAndPlay(songs: any[], accountId: string, device
 }
 
 // 🎯 语音口令处理总入口
-async function handleVoiceCommand(cmdType: string, engine: string, nodeName: string, rawKeyword: string, accountId: string, deviceId: string, quality?: string, strategy?: string, parsedPlatform?: string | null, shuffleFlag?: boolean, parsedLimit?: number) {
+async function handleVoiceCommand(cmdType: string, engine: string, nodeName: string, rawKeyword: string, accountId: string, deviceId: string, quality?: string, strategy?: string, parsedPlatform?: string | null, shuffleFlag?: boolean, parsedLimit?: number, expertCfg?: any) {
     const doShuffle = !!shuffleFlag;
+
+    // === 专家模式处理分支 ===
+    if (engine === 'expert') {
+        let effectiveLimit = (parsedLimit && parsedLimit > 0) ? parsedLimit : (cachedGlobalSettings.defaultLimit || 500);
+        try {
+            const searchRes = await searchExpertSongs(expertCfg, rawKeyword, effectiveLimit, pushDebugLog);
+
+            // 纯指令调用模式：只发请求 + 可选 TTS 回话，不播放音乐
+            if (searchRes && searchRes.isAction) {
+                if (searchRes.actionOk) {
+                    cancelAllTimers(accountId, deviceId);
+                    if (searchRes.actionReply && searchRes.actionReply.trim()) {
+                        await speakExpertReply(searchRes.actionReply.trim(), accountId, deviceId);
+                    }
+                } else {
+                    await playFailedSound(accountId, deviceId);
+                }
+                return;
+            }
+
+            if (searchRes === null || searchRes.songs.length === 0) {
+                await playFailedSound(accountId, deviceId);
+            } else {
+                const songs = searchRes.songs;
+                const collectionName = searchRes.collectionName;
+
+                let finalSongs = doShuffle && songs.length > 1 ? songs.slice().sort(() => Math.random() - 0.5) : songs;
+                if (doShuffle && songs.length > 1) pushDebugLog(`🎲 已开启随机播放，打乱 ${songs.length} 首歌曲顺序`);
+
+                if (finalSongs.length > effectiveLimit) {
+                    pushDebugLog(`✂️ 触发数量限制: 已截取前 ${effectiveLimit} 首歌曲`);
+                    finalSongs = finalSongs.slice(0, effectiveLimit);
+                }
+
+                await createPushPlaylistAndPlay(finalSongs, accountId, deviceId, 'expert', collectionName);
+            }
+        } catch (e) {
+            pushDebugLog(`⚠️ 专家模式执行异常: ${e}`);
+            await playFailedSound(accountId, deviceId);
+        }
+        return;
+    }
 
     // === LXMusic 处理分支 ===
     if (engine === 'lxmusic') {
@@ -1022,14 +1178,20 @@ async function connectWebSocket() {
                         const parsed = parseVoiceCommand(trimmedText);
 
                         if (parsed) {
-                            if (parsed.keyword) {
-                                // 正常流程：有关键词，继续搜歌
+                            // 🌟 允许执行的两种情形：
+                            //   一、有关键词（常规搜歌）
+                            //   二、该口令本身不需要关键词（固定关键词 / 专家模式纯指令调用）
+                            if (parsed.keyword || parsed.keywordOptional) {
                                 const platDesc = parsed.platform ? ` 平台词: [${PLAT_MAP[parsed.platform] || parsed.platform}]` : '';
-                                pushDebugLog(`🎯 命中口令词: [${parsed.matchedWord}], 完整指令: "${trimmedText}"${platDesc}`);
+                                if (parsed.keyword) {
+                                    pushDebugLog(`🎯 命中口令词: [${parsed.matchedWord}], 完整指令: "${trimmedText}"${platDesc}`);
+                                } else {
+                                    pushDebugLog(`🎯 命中口令词: [${parsed.matchedWord}]，该指令无需后续关键词，直接执行${platDesc}`);
+                                }
                                 playHitSound(msg.data.account_id, msg.data.device_id);
 
                                 // 传入解析好的参数
-                                handleVoiceCommand(parsed.type, parsed.engine, parsed.node, parsed.keyword, msg.data.account_id, msg.data.device_id, parsed.quality, parsed.strategy, parsed.platform, parsed.shuffleFlag, parsed.limit)
+                                handleVoiceCommand(parsed.type, parsed.engine, parsed.node, parsed.keyword, msg.data.account_id, msg.data.device_id, parsed.quality, parsed.strategy, parsed.platform, parsed.shuffleFlag, parsed.limit, parsed.expertCfg)
                                     .catch(async () => {
                                         await playFailedSound(msg.data.account_id, msg.data.device_id);
                                     })
@@ -1040,6 +1202,12 @@ async function connectWebSocket() {
                                 // 🌟 新增：空指令拦截流程 (只听到口令，没有后续内容)
                                 pushDebugLog(`⚠️ 拦截到空指令：只听到口令[${parsed.matchedWord}]，无后续关键词。`);
                                 pushDebugLog('========================================');
+
+                                // 🔇 独立开关关闭时，只记日志不出声
+                                if (cachedGlobalSettings.emptyCmdTTS === 'off') {
+                                    pushDebugLog(`🔇 空指令语音提示已关闭，本次静默处理`);
+                                    return;
+                                }
 
                                 // 启动一个异步闭包发送 TTS 语音，不阻塞 WebSocket 主线程
                                 (async () => {
@@ -1125,7 +1293,7 @@ router.post('/store', async (req) => {
             await updateGlobalSettingsCache();
         }
 
-        if (key === 'xiaoai_dav_configs' || key === 'xiaoai_lx_configs' || key === 'xiaoai_mf_configs') rebuildVoiceRoutes();
+        if (key === 'xiaoai_dav_configs' || key === 'xiaoai_lx_configs' || key === 'xiaoai_mf_configs' || key === 'xiaoai_expert_configs') rebuildVoiceRoutes();
 
         let syncKey = key;
         if (key === 'webdav_config') syncKey = 'iwebplayer.webdav';
