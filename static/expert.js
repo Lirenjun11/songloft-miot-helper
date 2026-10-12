@@ -321,6 +321,7 @@
     document.getElementById('btn-ex-cmd-test')?.addEventListener('click', async () => {
       const cfg = collectModalConfig();
       const keyword = document.getElementById('modal-ex-cmd-testkw').value.trim();
+      const testDeviceId = document.getElementById('modal-ex-cmd-testdevid')?.value.trim() || '';
       const resultBox = document.getElementById('ex-test-result');
       const testBtn = document.getElementById('btn-ex-cmd-test');
 
@@ -334,7 +335,7 @@
       testBtn.innerText = '测试中...';
 
       try {
-        const res = await apiPost('/expert/test', { config: cfg, keyword });
+        const res = await apiPost('/expert/test', { config: cfg, keyword, deviceId: testDeviceId });
 
         if (res && res.error) {
           resultBox.innerHTML = `<div style="font-size: 13px; color: var(--md-error);">❌ ${escapeHtml(res.error)}</div>`;
