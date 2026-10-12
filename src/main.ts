@@ -149,9 +149,7 @@ function setupCommSyncListeners() {
             // 处理 iWebPlayer 发来的删除指令
             if (payload.type === 'delete' && payload.key) {
                 const key = payload.key;
-                if (typeof songloft.storage.removeItem === 'function') await songloft.storage.removeItem(key);
-                else if (typeof (songloft.storage as any).remove === 'function') await (songloft.storage as any).remove(key);
-                else if (typeof (songloft.storage as any).delete === 'function') await (songloft.storage as any).delete(key);
+                await songloft.storage.delete(key);
                 return;
             }
 
@@ -1733,9 +1731,7 @@ router.delete('/store', async (req) => {
         if (!key) return jsonResponse({ error: "Missing key" }, 400);
 
         // 执行物理删除
-        if (typeof songloft.storage.removeItem === 'function') await songloft.storage.removeItem(key);
-        else if (typeof (songloft.storage as any).remove === 'function') await (songloft.storage as any).remove(key);
-        else if (typeof (songloft.storage as any).delete === 'function') await (songloft.storage as any).delete(key);
+        await songloft.storage.delete(key);
 
         // 删除成功后，广播告诉 iWebPlayer 也执行删除
         songloft.comm.send(TWIN_PLUGIN_ID, "sync_webdav_data", { type: 'delete', key: key }).catch(()=>{});
