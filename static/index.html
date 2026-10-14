@@ -510,7 +510,7 @@
           <div class="card-title" style="margin: 0;">🧩 专家模式 (自定义 URL 音源)</div>
           <button class="mh-btn" id="btn-show-add-ex-cmd" style="height: 28px; padding: 0 10px; font-size: 13px;">➕ 新增控制条目</button>
         </div>
-        <p class="desc" style="margin-bottom: 16px; line-height: 1.6;">通过语音口令触发你自定义的 HTTP 接口/直链音频，插件会自动解析返回结果并推送播放。URL 中可用 <code>{keyword}</code> 占位符注入语音里的关键词。</p>
+        <p class="desc" style="margin-bottom: 16px; line-height: 1.6;">通过语音口令触发你自定义的 HTTP 接口/直链音频，插件会自动解析返回结果并推送播放。URL/请求体中可用 <code>{keyword}</code> 占位符注入语音里的关键词，<code>{device_id}</code> 占位符注入当前响应的小爱音箱设备 ID。</p>
 
         <div id="ex-cmd-modal-mask" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.4); z-index: 9999; justify-content: center; align-items: center; backdrop-filter: blur(2px);">
           <div class="modal-box" style="max-height: 88vh; overflow-y: auto;">
@@ -530,13 +530,13 @@
             </div>
 
             <div class="mh-field">
-              <label>目标 URL (可含 {keyword} 占位符)</label>
-              <input type="text" id="modal-ex-cmd-url" class="mh-input" placeholder="https://api.example.com/search?q={keyword}">
+              <label>目标 URL (可含 {keyword} / {device_id} 占位符)</label>
+              <input type="text" id="modal-ex-cmd-url" class="mh-input" placeholder="https://api.example.com/search?q={keyword}&device={device_id}">
             </div>
 
             <div class="mh-field" id="ex-postbody-field" style="display: none;">
-              <label>POST 请求体 (JSON，可含 {keyword})</label>
-              <input type="text" id="modal-ex-cmd-postbody" class="mh-input" placeholder='{"keyword":"{keyword}","page":1}'>
+              <label>POST 请求体 (JSON，可含 {keyword} / {device_id})</label>
+              <input type="text" id="modal-ex-cmd-postbody" class="mh-input" placeholder='{"keyword":"{keyword}","device":"{device_id}","page":1}'>
             </div>
 
             <div class="mh-field">
@@ -625,6 +625,10 @@
                   <input type="text" id="modal-ex-cmd-testkw" class="mh-input" placeholder="例如：周杰伦">
                   <button class="mh-btn" id="btn-ex-cmd-test" style="white-space: nowrap;">▶️ 测试</button>
                 </div>
+              </div>
+              <div class="mh-field">
+                <label>模拟设备 ID (替换 {device_id}，可选，留空则替换为空值)</label>
+                <input type="text" id="modal-ex-cmd-testdevid" class="mh-input" placeholder="例如：5c27cf4b-5d33-4742-90b8-bf6a0e2a5c99">
               </div>
               <div id="ex-test-result" style="display: none; margin-top: 4px;"></div>
             </div>

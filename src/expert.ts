@@ -36,13 +36,18 @@ function pickField(item: any, mapping: string, fallbacks: string[] = []): any {
     return undefined;
 }
 
-// 构建实际请求 URL：替换 {keyword} 占位符
-function buildRequestUrl(template: string, keyword: string): string {
+// 构建实际请求 URL：替换 {keyword} / {device_id} 占位符
+function buildRequestUrl(template: string, keyword: string, deviceId: string = ''): string {
     if (!template) return '';
-    if (template.includes('{keyword}')) {
-        return template.split('{keyword}').join(encodeURIComponent(keyword));
+    let url = template;
+    if (url.includes('{keyword}')) {
+        url = url.split('{keyword}').join(encodeURIComponent(keyword));
     }
-    return template;
+    // device_id 为纯 ID 字符，原样注入，不做 URL 编码
+    if (url.includes('{device_id}')) {
+        url = url.split('{device_id}').join(deviceId || '');
+    }
+    return url;
 }
 
 // 归一化时长：字符串秒 / "mm:ss" / 数字 -> 秒(number)
@@ -95,7 +100,8 @@ export async function searchExpertSongs(
     cfg: any,
     keyword: string,
     limit: number,
-    logFn: (msg: string) => void
+    logFn: (msg: string) => void,
+    deviceId: string = ''
 ): Promise<{ songs: any[], collectionName: string, isAction?: boolean, actionOk?: boolean, actionStatus?: number, actionSnippet?: string, actionReply?: string } | null> {
     try {
         if (!cfg || !cfg.urlTemplate) {
@@ -103,7 +109,7 @@ export async function searchExpertSongs(
             return null;
         }
 
-        const requestUrl = buildRequestUrl(cfg.urlTemplate, keyword);
+        const requestUrl = buildRequestUrl(cfg.urlTemplate, keyword, deviceId);
         const method = (cfg.method || 'GET').toUpperCase();
         const responseType = cfg.responseType || 'auto';
 
@@ -117,7 +123,7 @@ export async function searchExpertSongs(
             logFn(`ℹ️ [专家模式] 本次指令无需关键词 (配置未使用 {keyword} 占位符)，直接执行`);
         }
 
-        logFn(`🧩 [专家模式] 触发自定义 URL (${method}): ${requestUrl}`);
+        logFn(`🧩 [专家模式] 触发自定义 URL (${method}): ${requestUrl}${deviceId ? ` (device_id: ${deviceId})` : ''}`);
 
         const headers: Record<string, string> = { 'X-Fetch-Timeout-Ms': '8000' };
         const fetchInit: any = { method, headers };
@@ -135,9 +141,9 @@ export async function searchExpertSongs(
         }
 
         if (method === 'POST' && cfg.postBody) {
-            const body = cfg.postBody.includes('{keyword}')
-                ? cfg.postBody.split('{keyword}').join(keyword)
-                : cfg.postBody;
+            let body = cfg.postBody;
+            if (body.includes('{keyword}')) body = body.split('{keyword}').join(keyword);
+            if (body.includes('{device_id}')) body = body.split('{device_id}').join(deviceId || '');
             fetchInit.body = body;
             if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
         }

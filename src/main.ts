@@ -143,15 +143,13 @@ function startServerHostDaemon() {
 // 📡 插件间数据同步消息监听器
 // ==========================================
 function setupCommSyncListeners() {
-    songloft.comm.onMessage("sync_webdav_data", async (payload, from) => {
+    songloft.comm.onMessage("sync_webdav_data", async (payload: any, from: string) => {
         if (from !== TWIN_PLUGIN_ID) return;
         try {
             // 处理 iWebPlayer 发来的删除指令
             if (payload.type === 'delete' && payload.key) {
                 const key = payload.key;
-                if (typeof songloft.storage.removeItem === 'function') await songloft.storage.removeItem(key);
-                else if (typeof (songloft.storage as any).remove === 'function') await (songloft.storage as any).remove(key);
-                else if (typeof (songloft.storage as any).delete === 'function') await (songloft.storage as any).delete(key);
+                await songloft.storage.delete(key);
                 return;
             }
 
@@ -392,7 +390,7 @@ router.post('/expert/test', async (req) => {
         const collect = (m: string) => { testLogs.push(m); };
 
         const started = Date.now();
-        const searchRes = await searchExpertSongs(cfg, keyword, cfg.limit || 0, collect);
+        const searchRes = await searchExpertSongs(cfg, keyword, cfg.limit || 0, collect, typeof body.deviceId === 'string' ? body.deviceId : '');
         const cost = Date.now() - started;
 
         // 纯指令调用模式：返回调用结果而非歌曲
@@ -1216,7 +1214,7 @@ async function handleVoiceCommand(cmdType: string, engine: string, nodeName: str
     if (engine === 'expert') {
         let effectiveLimit = (parsedLimit && parsedLimit > 0) ? parsedLimit : (cachedGlobalSettings.defaultLimit || 500);
         try {
-            const searchRes = await searchExpertSongs(expertCfg, rawKeyword, effectiveLimit, pushDebugLog);
+            const searchRes = await searchExpertSongs(expertCfg, rawKeyword, effectiveLimit, pushDebugLog, deviceId);
 
             // 纯指令调用模式：只发请求 + 可选 TTS 回话，不播放音乐
             if (searchRes && searchRes.isAction) {
@@ -1733,9 +1731,7 @@ router.delete('/store', async (req) => {
         if (!key) return jsonResponse({ error: "Missing key" }, 400);
 
         // 执行物理删除
-        if (typeof songloft.storage.removeItem === 'function') await songloft.storage.removeItem(key);
-        else if (typeof (songloft.storage as any).remove === 'function') await (songloft.storage as any).remove(key);
-        else if (typeof (songloft.storage as any).delete === 'function') await (songloft.storage as any).delete(key);
+        await songloft.storage.delete(key);
 
         // 删除成功后，广播告诉 iWebPlayer 也执行删除
         songloft.comm.send(TWIN_PLUGIN_ID, "sync_webdav_data", { type: 'delete', key: key }).catch(()=>{});
